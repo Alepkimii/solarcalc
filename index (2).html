@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GSPARX Solar Estimator + PDF Export</title>
+    
+    <!-- Libraries -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    
+    <style>
+        :root {
+            --primary: #00B884;
+            --navy: #0A1F3D;
+            --red: #EF4444;
+            --bg: #F0F4F8;
+            --white: #ffffff;
+        }
+
+        body { font-family: 'Inter', sans-serif; background-color: var(--bg); color: var(--navy); margin: 0; padding: 20px; }
+        .dashboard { max-width: 1200px; margin: 0 auto; display: grid; grid-template-columns: 320px 1fr; gap: 20px; }
+
+        /* Controls */
+        .panel { background: var(--white); padding: 20px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
+        .input-group { margin-bottom: 15px; }
+        label { display: block; font-weight: 700; font-size: 0.75rem; margin-bottom: 5px; color: #64748B; }
+        select, input { width: 100%; padding: 10px; border: 1px solid #DDD; border-radius: 8px; box-sizing: border-box; }
+        
+        .btn-pdf { 
+            width: 100%; padding: 12px; background: var(--navy); color: white; border: none; 
+            border-radius: 8px; cursor: pointer; font-weight: 700; margin-top: 10px;
+            transition: opacity 0.2s;
+        }
+        .btn-pdf:hover { opacity: 0.9; }
+
+        /* Stats */
+        .main-display { display: flex; flex-direction: column; gap: 20px; }
+        .top-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; }
+        .stat-card { background: var(--white); padding: 15px; border-radius: 12px; text-align: center; border-bottom: 4px solid var(--primary); }
+        .stat-card span { display: block; font-size: 0.75rem; color: #64748B; }
+        .stat-card b { font-size: 1.3rem; }
+
+        .charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .chart-card { background: var(--white); padding: 15px; border-radius: 12px; height: 350px; }
+        h2 { font-size: 1rem; margin-bottom: 15px; }
+
+        /* PDF HIDDEN TEMPLATE */
+        #pdf-template {
+            position: absolute; left: -9999px; top: -9999px; /* Move off-screen */
+            width: 800px; background: white; padding: 40px; color: var(--navy);
+        }
+        .pdf-header { border-bottom: 2px solid var(--primary); padding-bottom: 10px; margin-bottom: 20px; display: flex; justify-content: space-between; }
+        
+        @media (max-width: 900px) {
+            .dashboard { grid-template-columns: 1fr; }
+            .charts-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="dashboard">
+    <!-- INPUTS -->
+    <div class="panel">
+        <h2 style="border:none;">Solar Estimator</h2>
+        
+        <div class="input-group">
+            <label>Phase System</label>
+            <select id="phase">
+                <option value="4500">1-Phase System</option>
+                <option value="4200">3-Phase System</option>
+            </select>
+        </div>
+
+        <div class="input-group">
+            <label>Budget: RM <span id="budgetText">15,000</span></label>
+            <input type="range" id="budgetSlider" min="5000" max="80000" step="1000" value="15000">
+        </div>
+
+        <div class="input-group">
+            <label>Monthly Bill (RM)</label>
+            <input type="number" id="bill" value="400">
+        </div>
+
+        <div class="input-group">
+            <label>Monthly Usage (kWh)</label>
+            <input type="number" id="kwh" value="650">
+        </div>
+
+        <button class="btn-pdf" onclick="downloadPDF()">
+            <i class="fa-solid fa-file-pdf"></i> Export PDF Report
+        </button>
+    </div>
+
+    <!-- MAIN DISPLAY -->
+    <div class="main-display">
+        <div class="top-stats">
+            <div class="stat-card"><span>System Size</span><b id="statSize">0.0 kWp</b></div>
+            <div class="stat-card"><span>Payback Period</span><b id="statPayback">0.0 Years</b></div>
+            <div class="stat-card"><span>10yr Savings</span><b id="statGain">RM 0</b></div>
+        </div>
+
+        <div class="charts-grid">
+            <div class="chart-card"><h2>Cumulative Savings</h2><canvas id="chartSavings"></canvas></div>
+            <div class="chart-card"><h2>Outflow Comparison</h2><canvas id="chartComparison"></canvas></div>
+        </div>
+    </div>
+</div>
+
+<!-- HIDDEN PDF CONTENT (This is what the PDF captures) -->
+<div id="pdf-template">
+    <div class="pdf-header">
+        <h1>Solar Investment Report</h1>
+        <p id="pdf-date"></p>
+    </div>
+    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:20px; margin-bottom:30px;">
+        <div>
+            <h3>Input Parameters</h3>
+            <p><b>Phase:</b> <span id="pdf-phase"></span></p>
+            <p><b>Investment:</b> <span id="pdf-budget"></span></p>
+            <p><b>Current Bill:</b> <span id="pdf-bill"></span></p>
+        </div>
+        <div style="background: #f0fdf4; padding: 15px; border-radius: 10px;">
+            <h3>Projections</h3>
+            <p><b>System Size:</b> <span id="pdf-size"></span></p>
+            <p><b>Payback Period:</b> <span id="pdf-payback"></span></p>
+            <p><b>Total 10yr Savings:</b> <span id="pdf-gain"></span></p>
+        </div>
+    </div>
+    <div style="text-align:center;">
+        <p>This report was generated interactively. Solar performance is estimated based on 3.5 peak sun hours in Malaysia.</p>
+    </div>
+</div>
+
+<script>
+    let chartSavings, chartComparison;
+
+    const el = (id) => document.getElementById(id);
+
+    function initCharts() {
+        const config = { type: 'line', options: { responsive: true, maintainAspectRatio: false } };
+        
+        chartSavings = new Chart(el('chartSavings'), {
+            ...config,
+            data: { labels: [], datasets: [{ label: 'Total Savings', borderColor: '#00B884', data: [], fill: true, backgroundColor: 'rgba(0,184,132,0.1)' }] }
+        });
+
+        chartComparison = new Chart(el('chartComparison'), {
+            ...config,
+            data: { labels: [], datasets: [
+                { label: 'No Solar', borderColor: '#EF4444', data: [], borderDash: [5,5] },
+                { label: 'With Solar', borderColor: '#0A1F3D', data: [] }
+            ]}
+        });
+    }
+
+    function calculate() {
+        const cost = parseFloat(el('phase').value);
+        const budget = parseFloat(el('budgetSlider').value);
+        const monthlyBill = parseFloat(el('bill').value);
+        
+        el('budgetText').innerText = budget.toLocaleString();
+
+        const kwp = budget / cost;
+        const potentialSavings = Math.min((kwp * 3.5 * 30) * 0.51, monthlyBill);
+        
+        let savingsData = [], noSolarData = [], withSolarData = [budget], labels = [];
+        let cumSavings = 0, noSolarTotal = 0, withSolarTotal = budget;
+
+        for (let y = 0; y <= 10; y++) {
+            labels.push('Yr ' + y);
+            if(y > 0) {
+                const inflation = Math.pow(1.03, y);
+                const annualSaved = (potentialSavings * 12) * inflation;
+                const annualBill = (monthlyBill * 12) * inflation;
+
+                cumSavings += annualSaved;
+                noSolarTotal += annualBill;
+                withSolarTotal += (annualBill - annualSaved);
+            }
+            savingsData.push(Math.round(cumSavings));
+            noSolarData.push(Math.round(noSolarTotal));
+            withSolarData.push(Math.round(withSolarTotal));
+        }
+
+        // UI Updates
+        el('statSize').innerText = kwp.toFixed(2) + " kWp";
+        el('statGain').innerText = "RM " + Math.round(noSolarTotal - withSolarTotal + budget).toLocaleString();
+        el('statPayback').innerText = (potentialSavings > 0 ? (budget/(potentialSavings*12)).toFixed(1) : "0") + " Years";
+
+        chartSavings.data.labels = labels;
+        chartSavings.data.datasets[0].data = savingsData;
+        chartComparison.data.labels = labels;
+        chartComparison.data.datasets[0].data = noSolarData;
+        chartComparison.data.datasets[1].data = withSolarData;
+
+        chartSavings.update('none');
+        chartComparison.update('none');
+    }
+
+    async function downloadPDF() {
+        const { jsPDF } = window.jspdf;
+        
+        // Sync PDF template with current data
+        el('pdf-date').innerText = new Date().toLocaleDateString();
+        el('pdf-phase').innerText = el('phase').options[el('phase').selectedIndex].text;
+        el('pdf-budget').innerText = "RM " + el('budgetSlider').value;
+        el('pdf-bill').innerText = "RM " + el('bill').value;
+        el('pdf-size').innerText = el('statSize').innerText;
+        el('pdf-payback').innerText = el('statPayback').innerText;
+        el('pdf-gain').innerText = el('statGain').innerText;
+
+        const pdf = new jsPDF('p', 'pt', 'a4');
+        const content = el('pdf-template');
+
+        // Use html2canvas to capture the off-screen template
+        html2canvas(content, { scale: 2 }).then(canvas => {
+            const imgData = canvas.toDataURL('image/png');
+            const imgProps = pdf.getImageProperties(imgData);
+            const pdfWidth = pdf.internal.pageSize.getWidth();
+            const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+            
+            pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+            pdf.save(`Solar_Report_${Date.now()}.pdf`);
+        });
+    }
+
+    initCharts();
+    calculate();
+    document.querySelectorAll('input, select').forEach(i => i.addEventListener('input', calculate));
+
+</script>
+
+</body>
+</html>
